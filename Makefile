@@ -1,4 +1,4 @@
-.PHONY: vllm vllm-lora train pull pull-s3 pull-local push stop build logs status clean
+.PHONY: vllm vllm-lora train train-hf pull pull-s3 pull-local push stop build logs status clean
 
 # Default HuggingFace cache location
 export HF_CACHE ?= ~/.cache/huggingface
@@ -26,11 +26,30 @@ vllm-lora: stop
 build:
 	docker compose --profile train build finetune
 
-# Run training (stops vLLM first - GPU constraint)
+# Run training with local data (stops vLLM first - GPU constraint)
 train: stop build
-	@echo "Starting QLoRA fine-tuning..."
+	@echo "Starting QLoRA fine-tuning with local data..."
 	@echo "GPU will be used exclusively for training"
 	docker compose --profile train run --rm finetune
+	@echo "Training complete. Run 'make vllm-lora' to use the adapter"
+
+# Run training with HuggingFace dataset
+# Usage: make train-hf DATASET=username/dataset-name
+train-hf: stop build
+	@if [ -z "$(DATASET)" ]; then \
+		echo "Error: DATASET required. Usage: make train-hf DATASET=username/dataset"; \
+		echo ""; \
+		echo "Examples:"; \
+		echo "  make train-hf DATASET=mlabonne/FineTome-100k"; \
+		echo "  make train-hf DATASET=OpenAssistant/oasst1 SPLIT=train"; \
+		exit 1; \
+	fi
+	@echo "Starting QLoRA fine-tuning with HuggingFace dataset: $(DATASET)"
+	docker compose --profile train run --rm finetune python train_devstral.py \
+		--dataset $(DATASET) \
+		$(if $(SPLIT),--split $(SPLIT)) \
+		$(if $(TEXT_FIELD),--text-field $(TEXT_FIELD)) \
+		$(if $(MAX_SAMPLES),--max-samples $(MAX_SAMPLES))
 	@echo "Training complete. Run 'make vllm-lora' to use the adapter"
 
 # Pull training data from local folder
@@ -95,8 +114,9 @@ help:
 	@echo "  make status     - Show container and GPU status"
 	@echo ""
 	@echo "Training:"
-	@echo "  make train      - Run QLoRA fine-tuning (stops vLLM first)"
-	@echo "  make build      - Build finetune container"
+	@echo "  make train                        - Train with local data (from data/)"
+	@echo "  make train-hf DATASET=user/name   - Train with HuggingFace dataset"
+	@echo "  make build                        - Build finetune container"
 	@echo ""
 	@echo "Data Sync:"
 	@echo "  make pull-local SRC=/path  - Copy training data from local folder"

@@ -10,7 +10,7 @@ import argparse
 from pathlib import Path
 
 from unsloth import FastLanguageModel
-from datasets import Dataset
+from datasets import Dataset, load_dataset
 from trl import SFTTrainer
 from transformers import TrainingArguments
 
@@ -30,8 +30,8 @@ DEFAULT_EPOCHS = 3
 DEFAULT_LR = 2e-4
 
 
-def load_vibe_logs(data_dir: str) -> list[dict]:
-    """Load training data from Vibe CLI logs."""
+def load_local_data(data_dir: str) -> list[dict]:
+    """Load training data from local JSON/JSONL files."""
     data_path = Path(data_dir)
     conversations = []
 
@@ -52,6 +52,13 @@ def load_vibe_logs(data_dir: str) -> list[dict]:
                 conversations.append(data)
 
     return conversations
+
+
+def load_hf_dataset(dataset_name: str, split: str = "train", text_field: str = None):
+    """Load dataset from HuggingFace Hub."""
+    print(f"Loading dataset from HuggingFace: {dataset_name} (split: {split})")
+    dataset = load_dataset(dataset_name, split=split)
+    return dataset, text_field
 
 
 def format_conversation(example: dict) -> dict:
@@ -76,7 +83,18 @@ def format_conversation(example: dict) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune Devstral with QLoRA")
-    parser.add_argument("--data-dir", default="/data", help="Training data directory")
+
+    # Data source (mutually exclusive)
+    data_group = parser.add_mutually_exclusive_group()
+    data_group.add_argument("--data-dir", default=None, help="Local training data directory")
+    data_group.add_argument("--dataset", default=None, help="HuggingFace dataset name (e.g., 'username/dataset')")
+
+    # HuggingFace dataset options
+    parser.add_argument("--split", default="train", help="Dataset split to use (default: train)")
+    parser.add_argument("--text-field", default=None, help="Field containing text (if not using 'messages' format)")
+    parser.add_argument("--max-samples", type=int, default=None, help="Limit number of training samples")
+
+    # Training config
     parser.add_argument("--output-dir", default="/adapters/devstral-lora", help="Output adapter directory")
     parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Per-device batch size")
@@ -84,6 +102,10 @@ def main():
     parser.add_argument("--lr", type=float, default=DEFAULT_LR, help="Learning rate")
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
     args = parser.parse_args()
+
+    # Default to local data if no source specified
+    if args.data_dir is None and args.dataset is None:
+        args.data_dir = "/data"
 
     print(f"Loading model: {MODEL_NAME}")
     print(f"QLoRA config: rank={LORA_RANK}, alpha={LORA_ALPHA}")
@@ -111,19 +133,50 @@ def main():
         random_state=42,
     )
 
-    # Load and prepare dataset
-    print(f"Loading training data from: {args.data_dir}")
-    raw_data = load_vibe_logs(args.data_dir)
+    # Load dataset from HuggingFace or local files
+    if args.dataset:
+        # Load from HuggingFace Hub
+        dataset = load_dataset(args.dataset, split=args.split)
+        print(f"Loaded {len(dataset)} samples from HuggingFace: {args.dataset}")
 
-    if not raw_data:
-        print("No training data found. Please run 'make pull' first.")
-        return
+        # Determine text field
+        text_field = args.text_field
+        if text_field is None:
+            # Auto-detect: check for common field names
+            if "messages" in dataset.column_names:
+                # Format conversations to text
+                dataset = dataset.map(format_conversation)
+                text_field = "text"
+            elif "text" in dataset.column_names:
+                text_field = "text"
+            elif "content" in dataset.column_names:
+                text_field = "content"
+            else:
+                print(f"Available fields: {dataset.column_names}")
+                print("Please specify --text-field")
+                return
+        print(f"Using text field: {text_field}")
 
-    print(f"Loaded {len(raw_data)} conversations")
+    else:
+        # Load from local files
+        print(f"Loading training data from: {args.data_dir}")
+        raw_data = load_local_data(args.data_dir)
 
-    # Format dataset
-    formatted_data = [format_conversation(ex) for ex in raw_data]
-    dataset = Dataset.from_list(formatted_data)
+        if not raw_data:
+            print("No training data found. Please run 'make pull-local' or 'make pull-s3' first.")
+            return
+
+        print(f"Loaded {len(raw_data)} conversations")
+
+        # Format dataset
+        formatted_data = [format_conversation(ex) for ex in raw_data]
+        dataset = Dataset.from_list(formatted_data)
+        text_field = "text"
+
+    # Limit samples if requested
+    if args.max_samples and len(dataset) > args.max_samples:
+        dataset = dataset.select(range(args.max_samples))
+        print(f"Limited to {args.max_samples} samples")
 
     # Training arguments optimized for L4 24GB
     training_args = TrainingArguments(
@@ -149,7 +202,7 @@ def main():
         model=model,
         tokenizer=tokenizer,
         train_dataset=dataset,
-        dataset_text_field="text",
+        dataset_text_field=text_field,
         max_seq_length=MAX_SEQ_LENGTH,
         args=training_args,
     )

@@ -46,7 +46,7 @@ make vllm
 # API available at http://localhost:11434
 ```
 
-### Fine-tuning
+### Fine-tuning with local data
 
 ```bash
 # 1. Import training data
@@ -61,13 +61,27 @@ make train
 make vllm-lora
 ```
 
+### Fine-tuning with HuggingFace dataset
+
+```bash
+# Train directly from a HuggingFace dataset
+make train-hf DATASET=mlabonne/FineTome-100k
+
+# With options
+make train-hf DATASET=OpenAssistant/oasst1 SPLIT=train MAX_SAMPLES=1000
+
+# Start vLLM with the adapter
+make vllm-lora
+```
+
 ### Available commands
 
 | Command | Description |
 |---------|-------------|
 | `make vllm` | Start base inference (port 11434) |
 | `make vllm-lora` | Start inference with LoRA adapter |
-| `make train` | Run QLoRA fine-tuning |
+| `make train` | Train with local data (from `data/`) |
+| `make train-hf DATASET=...` | Train with HuggingFace dataset |
 | `make pull-local SRC=/path` | Copy data from local folder |
 | `make pull-s3` | Download data from S3 |
 | `make push` | Upload adapter to S3 |
@@ -75,9 +89,11 @@ make vllm-lora
 | `make status` | Show container and GPU status |
 | `make logs` | View vLLM logs |
 
-## Data format
+## Data sources
 
-Training data must be in JSON/JSONL format with the following structure:
+### Local files
+
+Place `.json` or `.jsonl` files in the `data/` folder with the following structure:
 
 ```json
 {
@@ -89,7 +105,19 @@ Training data must be in JSON/JSONL format with the following structure:
 }
 ```
 
-Place `.json` or `.jsonl` files in the `data/` folder.
+### HuggingFace datasets
+
+Supported dataset formats:
+- **messages**: Datasets with a `messages` field (auto-formatted)
+- **text**: Datasets with a `text` field (used directly)
+- **custom**: Use `TEXT_FIELD=fieldname` to specify
+
+```bash
+# Examples
+make train-hf DATASET=mlabonne/FineTome-100k
+make train-hf DATASET=HuggingFaceH4/ultrachat_200k SPLIT=train_sft
+make train-hf DATASET=custom/dataset TEXT_FIELD=content MAX_SAMPLES=5000
+```
 
 ## Configuration
 
