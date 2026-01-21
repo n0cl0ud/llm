@@ -1,0 +1,44 @@
+FROM nvidia/cuda:12.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3.11-dev \
+    python3-pip \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python3
+
+RUN pip install --upgrade pip setuptools wheel
+
+# Install PyTorch with CUDA 12.1 support
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# Install Unsloth with dependencies for QLoRA
+RUN pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
+RUN pip install --no-deps trl peft accelerate bitsandbytes
+
+# Install additional dependencies
+RUN pip install \
+    transformers \
+    datasets \
+    boto3 \
+    huggingface_hub \
+    safetensors \
+    sentencepiece \
+    protobuf
+
+# Create directories
+RUN mkdir -p /data /adapters /scripts
+
+WORKDIR /scripts
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python", "train_devstral.py"]

@@ -1,0 +1,79 @@
+version: "3.8"
+
+services:
+  vllm:
+    image: vllm/vllm-openai:nightly
+    container_name: devstral-vllm
+    runtime: nvidia
+    ipc: host
+    ports:
+      - "11434:8000"
+    volumes:
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    command:
+      - mistralai/Devstral-Small-2-24B-Instruct-2512
+      - --host=0.0.0.0
+      - --port=8000
+      - --max-model-len=81920
+      - --gpu-memory-utilization=0.95
+      - --kv-cache-dtype=fp8
+      - --tool-call-parser=mistral
+      - --enable-auto-tool-choice
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+    restart: unless-stopped
+    profiles:
+      - base
+
+  vllm-lora:
+    image: vllm/vllm-openai:nightly
+    container_name: devstral-vllm-lora
+    runtime: nvidia
+    ipc: host
+    ports:
+      - "11434:8000"
+    volumes:
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+      - ./adapters:/adapters:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    command:
+      - mistralai/Devstral-Small-2-24B-Instruct-2512
+      - --host=0.0.0.0
+      - --port=8000
+      - --max-model-len=81920
+      - --gpu-memory-utilization=0.95
+      - --kv-cache-dtype=fp8
+      - --tool-call-parser=mistral
+      - --enable-auto-tool-choice
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --lora-modules=devstral-custom=/adapters/devstral-lora
+    restart: unless-stopped
+    profiles:
+      - lora
+
+  finetune:
+    build:
+      context: .
+      dockerfile: Dockerfile.finetune
+    container_name: devstral-finetune
+    runtime: nvidia
+    ipc: host
+    volumes:
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+      - ./data:/data
+      - ./adapters:/adapters
+      - ./scripts:/scripts:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HF_TOKEN=${HF_TOKEN:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET:-}
+    working_dir: /scripts
+    profiles:
+      - train
