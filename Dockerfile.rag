@@ -1,0 +1,23 @@
+# RAG Proxy - Lightweight FastAPI service for RAG-enhanced inference
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn[standard] \
+    httpx \
+    qdrant-client \
+    sentence-transformers
+
+# Pre-download the embedding model
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+# Copy scripts
+COPY scripts/rag_proxy.py /app/
+COPY scripts/ingest.py /app/
+
+EXPOSE 8000
+
+CMD ["uvicorn", "rag_proxy:app", "--host", "0.0.0.0", "--port", "8000"]

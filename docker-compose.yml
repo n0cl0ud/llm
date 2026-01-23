@@ -1,4 +1,91 @@
 services:
+  # =============================================================================
+  # Vector Database for RAG
+  # =============================================================================
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+    restart: unless-stopped
+    profiles:
+      - rag
+
+  # =============================================================================
+  # RAG Proxy - Enriches prompts with context from Qdrant
+  # =============================================================================
+  rag-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.rag
+    container_name: rag-proxy
+    ports:
+      - "11435:8000"
+    environment:
+      - VLLM_URL=http://vllm:8000
+      - QDRANT_URL=http://qdrant:6333
+      - COLLECTION_NAME=conversations
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - RAG_TOP_K=5
+      - RAG_MIN_SCORE=0.3
+    depends_on:
+      - qdrant
+      - vllm
+    restart: unless-stopped
+    profiles:
+      - rag
+
+  rag-proxy-lora:
+    build:
+      context: .
+      dockerfile: Dockerfile.rag
+    container_name: rag-proxy-lora
+    ports:
+      - "11435:8000"
+    environment:
+      - VLLM_URL=http://vllm-lora:8000
+      - QDRANT_URL=http://qdrant:6333
+      - COLLECTION_NAME=conversations
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - RAG_TOP_K=5
+      - RAG_MIN_SCORE=0.3
+    depends_on:
+      - qdrant
+      - vllm-lora
+    restart: unless-stopped
+    profiles:
+      - rag-lora
+
+  # =============================================================================
+  # Ingest service - Index logs into Qdrant
+  # =============================================================================
+  ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile.rag
+    container_name: ingest
+    volumes:
+      - ./data:/data:ro
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - COLLECTION_NAME=conversations
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+    depends_on:
+      - qdrant
+    command: ["python", "ingest.py", "--data-dir", "/data"]
+    profiles:
+      - ingest
+
+  # =============================================================================
+  # vLLM Inference
+  # =============================================================================
   vllm:
     image: vllm/vllm-openai:nightly
     container_name: devstral-vllm

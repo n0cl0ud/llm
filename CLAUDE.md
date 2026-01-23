@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Context - Devstral Fine-tuning Pipeline
+## Project Context - Devstral Fine-tuning + RAG Pipeline
 
 ## Current Server Setup
 - Instance: AWS EC2 g6e.xlarge (GPU L4 24GB VRAM)
@@ -33,32 +33,87 @@ docker run -d \
   --enable-chunked-prefill
 ```
 
-## Goal
-Create a clean Docker setup with:
-1. **docker-compose.yml** with 3 services:
-   - `vllm`: Base model inference (port 11434)
-   - `vllm-lora`: Inference with fine-tuned adapter (port 11434)
-   - `finetune`: Unsloth container for QLoRA training
+## Architecture
 
-2. **Dockerfile.finetune**: Image with Unsloth + QLoRA optimized for L4 24GB
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────────────┐
+│  Vibe CLI   │────▶│  RAG Proxy  │────▶│  vLLM (fine-tuned)  │
+│  (dev)      │     │  :11435     │     │  :11434             │
+└─────────────┘     └──────┬──────┘     └─────────────────────┘
+                          │
+                          ▼
+                   ┌─────────────┐
+                   │   Qdrant    │  ← Conversation memory
+                   │   :6333     │
+                   └─────────────┘
+```
 
-3. **Scripts**:
-   - `train_devstral.py`: QLoRA fine-tuning (rank=32, alpha=64)
-   - `s3_sync.py`: Pull/push training data from S3
+## Services (docker-compose.yml)
 
-4. **Makefile** for easy commands:
-   - `make vllm` → Start base inference
-   - `make vllm-lora` → Start fine-tuned inference
-   - `make train` → Stop vLLM + run training
-   - `make pull/push` → S3 sync
+| Service | Port | Description |
+|---------|------|-------------|
+| `vllm` | 11434 | Base model inference |
+| `vllm-lora` | 11434 | Fine-tuned model inference |
+| `rag-proxy` | 11435 | RAG proxy (base model) |
+| `rag-proxy-lora` | 11435 | RAG proxy (fine-tuned) |
+| `qdrant` | 6333 | Vector database |
+| `finetune` | - | QLoRA training container |
+| `ingest` | - | Index logs into Qdrant |
+
+## Makefile Commands
+
+### Inference
+- `make vllm` → Base model (no RAG)
+- `make vllm-lora` → Fine-tuned model (no RAG)
+- `make rag` → Base model + RAG memory
+- `make rag-lora` → Fine-tuned + RAG memory
+
+### RAG
+- `make ingest` → Index logs from data/ into Qdrant
+- `make ingest-clear` → Clear and re-index
+- `make stats` → Show Qdrant stats
+
+### Training
+- `make train` → QLoRA fine-tuning with local data
+- `make train-hf DATASET=name` → Fine-tune with HuggingFace dataset
+
+### Data
+- `make pull-local SRC=/path` → Copy logs to data/
+- `make pull-s3` / `make push` → S3 sync
 
 ## Data Flow
-Vibe CLI (dev machine) → collect logs from ~/.vibe/logs/ → push to S3 → pull on server → train → LoRA adapter → vLLM with --lora-modules
+
+### For RAG (memory):
+```
+Vibe logs → data/ → make ingest → Qdrant → RAG proxy enriches prompts
+```
+
+### For Fine-tuning (behavior):
+```
+Vibe logs → data/ → make train → LoRA adapter → vLLM-lora
+```
 
 ## GPU Constraint
 vLLM and training cannot run simultaneously (same 24GB GPU).
-Makefile must stop vLLM before starting training.
+Makefile stops vLLM before starting training.
 
-## LoRA Config for Fine-tuned vLLM
-Add this flag to vLLM command:
---lora-modules devstral-custom=/adapters/devstral-lora
+Qdrant + RAG proxy run on CPU, so they can run alongside vLLM.
+
+## Configuration
+
+### QLoRA (fine-tuning)
+- Rank: 32
+- Alpha: 64
+- Target: q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj
+
+### RAG Proxy
+- Embedding model: `all-MiniLM-L6-v2` (runs on CPU)
+- Top-K retrieval: 5
+- Min similarity score: 0.3
+- Collection: `conversations`
+
+### Vibe CLI
+For RAG mode, configure endpoint to RAG proxy port:
+```
+endpoint: http://server:11435
+```
