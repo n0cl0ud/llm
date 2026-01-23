@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:gitlab.com)",
+      "WebFetch(domain:hub.docker.com)",
+      "Bash(git add:*)",
+      "Bash(git commit -s -m \"$\\(cat <<''EOF''\nUpdate CUDA to 12.4.1 and fix docker-compose\n\n- Dockerfile: nvidia/cuda:12.4.1-devel-ubuntu22.04\n- Dockerfile: PyTorch cu124 to match CUDA version\n- docker-compose: remove obsolete version attribute\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(git checkout:*)",
+      "Bash(git commit:*)",
+      "Bash(gh pr create:*)",
+      "Bash(where:*)",
+      "Bash(cmd.exe /c \"where gh\")",
+      "Bash(git merge:*)"
+    ]
+  }
+}
